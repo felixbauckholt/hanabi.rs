@@ -178,6 +178,9 @@ pub trait PublicInformation: Clone {
     /// `self.get_hat_sum(total_info, view)` tells us which choice to take, and at the same time
     /// mutates `self` to simulate the choice becoming common knowledge.
     fn get_hat_sum(&mut self, total_info: u32, view: &OwnedGameView) -> ModulusInformation {
+        if total_info == 1 {
+            return ModulusInformation::none();
+        }
         let (infos, new_player_hands): (Vec<_>, Vec<_>) = view.get_other_players().iter().map(|player| {
             let mut hand_info = self.get_player_info(player);
             let info = self.get_hat_info_for_player(player, &mut hand_info, total_info, view);
@@ -197,6 +200,9 @@ pub trait PublicInformation: Clone {
     /// and got the result `info`, we can call `self.update_from_hat_sum(info, view)` to update
     /// from that fact.
     fn update_from_hat_sum(&mut self, mut info: ModulusInformation, view: &OwnedGameView) {
+        if info.modulus == 1 {
+            return;
+        }
         let info_source = view.board.player;
         let (other_infos, mut new_player_hands): (Vec<_>, Vec<_>) = view.get_other_players().into_iter().filter(|player| {
             *player != info_source
@@ -229,5 +235,37 @@ pub trait PublicInformation: Clone {
             }
         }
         info
+    }
+
+    /// Suppose we as the current player can do some action that others don't know we can, but that
+    /// others will recognize once they see it (say we discard a card that we only privately know
+    /// to be dead). We can use this to transmit half a bit of information: We get a hat sum; if the
+    /// sum is 0, we do that action to transmit this hat information, if the sum is something else,
+    /// we don't (and thus don't transmit information since other players won't learn that we could
+    /// do the action).
+    ///
+    /// We will have (roughly) a probability of `1/num_states` of choosing to do the action, and if
+    /// we do, we transmit `log(num_states)` bits of  information to each player.
+    /// Note that other players need to know how we chose `num_states`.
+    // FIXME: talk about optimum!
+    // TODO: Randomization here could actually help! (For instance, right now, calling this
+    // method twice in a row is kind of useless.) We'd just have to do some careful bookkeeping of
+    // our random state.
+    fn decide_action_not_known_to_be_possible(&mut self, num_states: u32, view: &OwnedGameView) -> bool {
+        let hat_sum = self.clone().get_hat_sum(num_states, view);
+        if hat_sum.value == 0 {
+            let _ = self.get_hat_sum(num_states, view);
+            true
+        } else {
+            false
+        }
+    }
+    /// If we infer that the player making the move called `decide_action_not_known_to_be_possible()`
+    /// and got the result `true`, we call `update_from_action_not_known_to_be_possible`.
+    fn update_from_action_not_known_to_be_possible(&mut self, num_states: u32, view: &OwnedGameView) {
+        self.update_from_hat_sum(ModulusInformation {
+            modulus: num_states,
+            value: 0,
+        }, view);
     }
 }
