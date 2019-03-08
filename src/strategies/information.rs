@@ -1,5 +1,6 @@
 use fnv::{FnvHashMap, FnvHashSet};
 use std::cmp::Ordering;
+use float_ord::*;
 
 use strategy::*;
 use game::*;
@@ -420,12 +421,6 @@ impl MyPublicInformation {
             })
     }
 
-    fn knows_dead_card(&self, player: &Player) -> bool {
-            self.hand_info[player].iter().any(|table| {
-                table.probability_is_dead(&self.board) == 1.0
-            })
-    }
-
     fn someone_else_needs_hint(&self, view: &OwnedGameView) -> bool {
         // Does another player have a playable card, but doesn't know it?
         view.get_other_players().iter().any(|player| {
@@ -518,117 +513,86 @@ impl PublicInformation for MyPublicInformation {
         *self == other
     }
 
-    fn ask_questions<Callback>(
+    fn ask_question(
         &self,
-        me: &Player,
-        hand_info: &mut HandInfo<CardPossibilityTable>,
-        mut ask_question: Callback,
-        mut info_remaining: u32,
-    ) where Callback: FnMut(&mut HandInfo<CardPossibilityTable>, &mut u32, Box<Question>) {
+        _me: &Player,
+        hand_info: &HandInfo<CardPossibilityTable>,
+        total_info: u32,
+    ) -> Option<Box<Question>> {
         // Changing anything inside this function will not break the information transfer
         // mechanisms!
 
-        let compute_augmented_hand_info = |hand_info: &HandInfo<CardPossibilityTable>| {
-            hand_info.iter().cloned().enumerate()
-            .map(|(i, card_table)| {
-                let p_play = card_table.probability_is_playable(&self.board);
-                let p_dead = card_table.probability_is_dead(&self.board);
-                let is_determined = card_table.is_determined();
-                (card_table, i, p_play, p_dead, is_determined)
-            })
-            .collect::<Vec<_>>()
-        };
+        let augmented_hand_info_raw = hand_info.iter().cloned().enumerate().filter_map(|(i, card_table)| {
+            let p_play = card_table.probability_is_playable(&self.board);
+            let p_dead = card_table.probability_is_dead(&self.board);
+            Some((i, p_play, p_dead))
+        }).collect::<Vec<_>>();
+        let know_playable_card = augmented_hand_info_raw.iter().any(|&(_, p_play, _)| p_play == 1.0);
+        let know_dead_card     = augmented_hand_info_raw.iter().any(|&(_, _, p_dead)| p_dead == 1.0);
 
-        if !self.knows_playable_card(me) { // TODO: changing this to "if true {" slightly improves the three-player game and
-                                           // very slightly worsens the other cases. There probably is some
-                                           // other way to make this decision that's better in all cases.
-            let augmented_hand_info = compute_augmented_hand_info(hand_info);
-            let mut ask_play = augmented_hand_info.iter()
-                .filter(|&&(_, _, p_play, p_dead, is_determined)| {
-                    if is_determined { return false; }
-                    if p_dead == 1.0  { return false; }
-                    if p_play == 1.0 || p_play < 0.2 { return false; }
-                    true
-                }).collect::<Vec<_>>();
-            // sort by probability of play, then by index
-            ask_play.sort_by(|&&(_, i1, p1, _, _), &&(_, i2, p2, _, _)| {
-                    // It's better to include higher-probability-of-playability
-                    // cards into our combo question, since that maximizes our
-                    // chance of finding out about a playable card.
-                    let result = p2.partial_cmp(&p1);
-                    if result == None || result == Some(Ordering::Equal) {
-                        i1.cmp(&i2)
-                    } else {
-                        result.unwrap()
-                    }
-            });
+        // We don't need to find out anything about cards that are determined or dead.
+        let augmented_hand_info = augmented_hand_info_raw.into_iter().filter(|&(i, _, p_dead)| {
+            if p_dead == 1.0 { false }
+            else if hand_info[i].is_determined() { false }
+            else { true }
+        }).collect::<Vec<_>>();
 
-            if self.board.num_players == 5 {
-                for &(_, i, _, _, _) in ask_play {
-                    ask_question(hand_info, &mut info_remaining, Box::new(q_is_playable(i)));
-                    if info_remaining <= 1 { return; }
-                }
-            } else {
-                let mut rest_combo = AdditiveComboQuestion {questions: Vec::new()};
-                for &(_, i, _, _, _) in ask_play {
-                    if rest_combo.info_amount() < info_remaining {
-                        rest_combo.questions.push(Box::new(q_is_playable(i)));
-                    }
-                }
-                rest_combo.questions.reverse(); // It's better to put lower-probability-of-playability
-                                                // cards first: The difference only matters if we
-                                                // find a playable card, and conditional on that,
-                                                // it's better to find out about as many non-playable
-                                                // cards as possible.
-                if rest_combo.info_amount() < info_remaining && !self.knows_dead_card(me) {
-                    let mut ask_dead = augmented_hand_info.iter()
-                        .filter(|&&(_, _, _, p_dead, _)| {
-                            p_dead > 0.0 && p_dead < 1.0
-                        }).collect::<Vec<_>>();
-                    // sort by probability of death, then by index
-                    ask_dead.sort_by(|&&(_, i1, _, d1, _), &&(_, i2, _, d2, _)| {
-                            let result = d2.partial_cmp(&d1);
-                            if result == None || result == Some(Ordering::Equal) {
-                                i1.cmp(&i2)
-                            } else {
-                                result.unwrap()
-                            }
-                    });
-                    for &(_, i, _, _, _) in ask_dead {
-                        if rest_combo.info_amount() < info_remaining {
-                            rest_combo.questions.push(Box::new(q_is_dead(i)));
-                        }
-                    }
-                }
-                ask_question(hand_info, &mut info_remaining, Box::new(rest_combo));
-                if info_remaining <= 1 { return; }
+        if !know_playable_card {
+            // Vector of tuples (ask_dead, i, p_yes), where ask_dead=false means we'll
+            // ask if the card at i is playable, and ask_dead=true means we ask if the card at i is
+            // dead. p_yes is the probability the answer is nonzero.
+            let mut to_ask: Vec<(bool, usize, f32)> = augmented_hand_info.iter().filter_map(|&(i, p_play, _)| {
+                if p_play == 0.0 { None }
+                else { Some((false, i, p_play)) }
+            }).collect();
+            if !know_dead_card {
+                to_ask.extend(augmented_hand_info.iter().filter_map(|&(i, _, p_dead)| {
+                    if p_dead == 0.0 { None }
+                    else { Some((true, i, p_dead)) }
+                }));
+            }
+
+            let combo_question_capacity = (total_info - 1) as usize;
+            if to_ask.len() > combo_question_capacity {
+                // The questions don't fit into an AdditiveComboQuestion.
+                // Sort by type (ask_dead=false first), then by p_yes (bigger first)
+                to_ask.sort_by_key(|&(ask_dead, _, p_yes)| {(ask_dead, FloatOrd(-p_yes))});
+                to_ask.truncate(combo_question_capacity);
+            }
+
+            // Sort by type (ask_dead=false first), then by p_yes (smaller first), since it's
+            // better to put lower-probability-of-playability/death cards first: The difference
+            // only matters if we find a playable/dead card, and conditional on that, it's better
+            // to find out about as many non-playable/non-dead cards as possible.
+            to_ask.sort_by_key(|&(ask_dead, _, p_yes)| {(ask_dead, FloatOrd(p_yes))});
+            let questions = to_ask.into_iter().map(|(ask_dead, i, _)| -> Box<Question> {
+                if ask_dead { Box::new(q_is_dead(i)) }
+                else        { Box::new(q_is_playable(i)) }
+            }).collect::<Vec<_>>();
+            if questions.len() > 0 {
+                return Some(Box::new(AdditiveComboQuestion { questions }))
             }
         }
 
-        // Recompute augmented_hand_info, incorporating the things we learned when asking questions
-        let augmented_hand_info = compute_augmented_hand_info(hand_info);
-        let mut ask_partition = augmented_hand_info.iter()
-            .filter(|&&(_, _, _, p_dead, is_determined)| {
-                if is_determined { return false }
-                // TODO: possibly still valuable to ask?
-                if p_dead == 1.0 { return false }
-                true
-            }).collect::<Vec<_>>();
-        // sort by probability of play, then by index
-        ask_partition.sort_by(|&&(_, i1, p1, _, _), &&(_, i2, p2, _, _)| {
-                // *higher* probabilities are better
-                let result = p2.partial_cmp(&p1);
-                if result == None || result == Some(Ordering::Equal) {
-                    i1.cmp(&i2)
-                } else {
-                    result.unwrap()
-                }
-        });
+        let ask_play_score = |p_play: f32| FloatOrd((p_play-0.7).abs());
+        let mut ask_play = augmented_hand_info.iter().filter(|&&(_, p_play, _)| {
+            ask_play_score(p_play) < FloatOrd(0.2)
+        }).cloned().collect::<Vec<_>>();
+        ask_play.sort_by_key(|&(i, p_play, _)| (ask_play_score(p_play), i));
+        if let Some(&(i, _, _)) = ask_play.get(0) {
+            return Some(Box::new(q_is_playable(i)));
+        }
 
-        for &(ref card_table, i, _, _, _) in ask_partition {
-            let question = CardPossibilityPartition::new(i, info_remaining, &card_table, &self.board);
-            ask_question(hand_info, &mut info_remaining, Box::new(question));
-            if info_remaining <= 1 { return; }
+        let mut ask_partition = augmented_hand_info;
+        // sort by probability of death (lowest first), then by index
+        ask_partition.sort_by_key(|&(i, _, p_death)| {
+            (FloatOrd(p_death), i)
+        });
+        if let Some(&(i, _, _)) = ask_partition.get(0) {
+            let question = CardPossibilityPartition::new(i, total_info, &hand_info[i], &self.board);
+            Some(Box::new(question))
+        } else {
+            None
         }
     }
 }
@@ -814,24 +778,14 @@ impl InformationPlayerStrategy {
         //     debug!("{}: {}", i, card_table);
         // }
 
-        let playable_cards = private_info.iter().enumerate().filter(|&(_, card_table)| {
-            card_table.probability_is_playable(&view.board) == 1.0
+        // If possible, play the best playable card
+        // the higher the play_score, the better to play
+        let mut playable_cards = private_info.iter().enumerate().filter_map(|(i, card_table)| {
+            if card_table.probability_is_playable(&view.board) != 1.0 { return None; }
+            Some((i, self.get_average_play_score(view, card_table)))
         }).collect::<Vec<_>>();
-
-        if playable_cards.len() > 0 {
-            // play the best playable card
-            // the higher the play_score, the better to play
-            let mut play_score = -1.0;
-            let mut play_index = 0;
-
-            for (index, card_table) in playable_cards {
-                let score = self.get_average_play_score(view, card_table);
-                if score > play_score {
-                    play_score = score;
-                    play_index = index;
-                }
-            }
-
+        playable_cards.sort_by_key(|&(i, play_score)| (FloatOrd(-play_score), i));
+        if let Some(&(play_index, _)) = playable_cards.get(0) {
             return TurnChoice::Play(play_index)
         }
 
@@ -909,23 +863,19 @@ impl InformationPlayerStrategy {
             return TurnChoice::Discard(useless_indices[0]);
         }
 
-        // Play the best discardable card
-        let mut compval = 0.0;
-        let mut index = 0;
-        for (i, card_table) in private_info.iter().enumerate() {
+        // Make the least risky discard.
+        let mut cards_by_discard_value = private_info.iter().enumerate().map(|(i, card_table)| {
             let probability_is_seen = card_table.probability_of_predicate(&|card| {
                 view.can_see(card)
             });
-            let my_compval =
+            let compval =
                 20.0 * probability_is_seen
                 + 10.0 * card_table.probability_is_dispensable(&view.board)
                 + card_table.average_value();
-
-            if my_compval > compval {
-                compval = my_compval;
-                index = i;
-            }
-        }
+            (i, compval)
+        }).collect::<Vec<_>>();
+        cards_by_discard_value.sort_by_key(|&(i, compval)| (FloatOrd(-compval), i));
+        let (index, _) = cards_by_discard_value[0];
         TurnChoice::Discard(index)
     }
 

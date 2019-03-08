@@ -4,6 +4,7 @@ extern crate log;
 extern crate rand;
 extern crate crossbeam;
 extern crate fnv;
+extern crate float_ord;
 
 mod helpers;
 mod game;

@@ -117,18 +117,37 @@ pub trait PublicInformation: Clone {
 
     fn agrees_with(&self, other: Self) -> bool;
 
-    /// By defining `ask_questions`, we decides which `Question`s a player learns the answers to.
+    /// By defining `ask_question`, we decides which `Question`s a player learns the answers to.
     ///
-    /// A player "asks" a question by calling the callback. Questions can depend on the answers to
-    /// earlier questions: We are given a `&mut HandInfo<CardPossibilityTable>` that we'll have to pass
-    /// to that callback; there, it will be modified to reflect the answer to the question. Note that `self`
-    /// is not modified and thus reflects the state before any player "asked" any question.
+    /// Whenever we need to compute a "hat value", this method will be called repeatedly, either
+    /// until the information runs out, or until it returns `None`. These questions can depend on
+    /// the answers to earlier questions: We are given a `&HandInfo<CardPossibilityTable>` that
+    /// reflect the answers of previous questions for the same "hat value computation".
     ///
-    /// The product of the `info_amount()`s of all questions we have may not exceed `total_info`.
-    /// For convenience, we pass a `&mut u32` to the callback, and it will be updated to the
-    /// "remaining" information amount.
-    fn ask_questions<Callback>(&self, &Player, &mut HandInfo<CardPossibilityTable>, Callback, total_info: u32)
-        where Callback: FnMut(&mut HandInfo<CardPossibilityTable>, &mut u32, Box<Question>);
+    /// Note that `self` does not reflect the answers to previous questions; it reflects the state
+    /// before the entire "hat value" calculation.
+    fn ask_question(&self, &Player, &HandInfo<CardPossibilityTable>, total_info: u32) -> Option<Box<Question>>;
+
+    fn ask_question_wrapper(&self, player: &Player, hand_info: &HandInfo<CardPossibilityTable>, total_info: u32)
+        -> Option<Box<Question>>
+    {
+        assert!(total_info > 0);
+        if total_info == 1 {
+            None
+        } else {
+            let result = self.ask_question(player, hand_info, total_info);
+            if let Some(ref question) = result {
+                if question.info_amount() > total_info {
+                    panic!("ask_question returned question with info_amount = {} > total_info = {}!",
+                           question.info_amount(), total_info);
+                }
+                if question.info_amount() == 1 {
+                    panic!("ask_question returned a trivial question!");
+                }
+            }
+            result
+        }
+    }
 
     fn set_player_infos(&mut self, infos: Vec<(Player, HandInfo<CardPossibilityTable>)>) {
         for (player, new_hand_info) in infos {
@@ -142,14 +161,10 @@ pub trait PublicInformation: Clone {
     ) -> ModulusInformation {
         assert!(player != &view.player);
         let mut answer_info = ModulusInformation::none();
-        {
-            let callback = |hand_info: &mut HandInfo<CardPossibilityTable>, info_remaining: &mut u32, question: Box<Question>| {
-                let new_answer_info = question.answer_info(view.get_hand(player), view.get_board());
-                question.acknowledge_answer_info(new_answer_info.clone(), hand_info, view.get_board());
-                answer_info.combine(new_answer_info, total_info);
-                *info_remaining = answer_info.info_remaining(total_info);
-            };
-            self.ask_questions(player, hand_info, callback, total_info);
+        while let Some(question) = self.ask_question_wrapper(player, hand_info, answer_info.info_remaining(total_info)) {
+            let new_answer_info = question.answer_info(view.get_hand(player), view.get_board());
+            question.acknowledge_answer_info(new_answer_info.clone(), hand_info, view.get_board());
+            answer_info.combine(new_answer_info, total_info);
         }
         answer_info.cast_up(total_info);
         answer_info
@@ -162,14 +177,9 @@ pub trait PublicInformation: Clone {
         board: &BoardState,
         mut info: ModulusInformation,
     ) {
-        let total_info = info.modulus;
-        {
-            let callback = |hand_info: &mut HandInfo<CardPossibilityTable>, info_remaining: &mut u32, question: Box<Question>| {
-                let answer_info = info.split(question.info_amount());
-                question.acknowledge_answer_info(answer_info, hand_info, board);
-                *info_remaining = info.modulus;
-            };
-            self.ask_questions(player, hand_info, callback, total_info);
+        while let Some(question) = self.ask_question_wrapper(player, hand_info, info.modulus) {
+            let answer_info = info.split(question.info_amount());
+            question.acknowledge_answer_info(answer_info, hand_info, board);
         }
         assert!(info.value == 0);
     }
