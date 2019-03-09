@@ -166,12 +166,13 @@ fn get_results_table() -> String {
     let n_threads = 8;
 
     let intro = format!("On the first {} seeds, we have these average scores and win rates:\n\n", n_trials);
-    let format_name    = |x|  format!(" {:7} ",      x);
-    let format_players = |x|  format!("   {}p    ",  x);
-    let format_percent = |x|  format!(" {:05.2} % ", x);
-    let format_score   = |x|  format!(" {:07.4} ",   x);
-    let space          = String::from("         ");
-    let dashes         = String::from("---------");
+    let format_name    = |x|         format!(" {:7} ",      x);
+    let format_players = |x|         format!("     {}p  (stderr) ",  x);
+    let format_percent = |x, stderr| format!(" {:05.2} % ({:.2} %) ", x, stderr);
+    let format_score   = |x, stderr| format!(" {:07.4} ({:.4}) ", x, stderr);
+    let space          =        String::from("         ");
+    let dashes         =        String::from("---------");
+    let dashes_long    =        String::from("------------------");
     type TwoLines = (String, String);
     fn make_twolines(player_nums: &Vec<u32>, head: TwoLines, make_block: &dyn Fn(u32) -> TwoLines) -> TwoLines {
         let mut blocks = player_nums.iter().cloned().map(make_block).collect::<Vec<_>>();
@@ -185,11 +186,16 @@ fn get_results_table() -> String {
     fn concat_twolines(body: Vec<TwoLines>) -> String {
         body.into_iter().fold(String::default(), |output, (a, b)| (output + &a + "\n" + &b + "\n"))
     }
-    let header = make_twolines(&player_nums, (space.clone(), dashes.clone()), &|n_players| (format_players(n_players), dashes.clone()));
+    let header = make_twolines(&player_nums,
+                               (space.clone(), dashes.clone()),
+                               &|n_players| (format_players(n_players), dashes_long.clone()));
     let mut body = strategies.iter().map(|strategy| {
         make_twolines(&player_nums, (format_name(strategy), space.clone()), &|n_players| {
             let simresult = sim_games(n_players, strategy, Some(seed), n_trials, n_threads, None);
-            (format_score(simresult.average_score()), format_percent(simresult.percent_perfect()))
+            (
+                format_score(simresult.average_score(), simresult.score_stderr()),
+                format_percent(simresult.percent_perfect(), simresult.percent_perfect_stderr())
+            )
         })
     }).collect::<Vec<_>>();
     body.insert(0, header);

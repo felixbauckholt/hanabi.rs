@@ -97,6 +97,17 @@ impl Histogram {
     pub fn average(&self) -> f32 {
         (self.sum as f32) / (self.total_count as f32)
     }
+    pub fn stdev_of_average(&self) -> f32 {
+        let average = self.average();
+        let mut var_sum = 0.0;
+        for (&val, &count) in self.hist.iter() {
+            var_sum += (val as f32 - average).powi(2) * count as f32;
+        }
+        // Divide by (self.total_count - 1) estimate the variance of the distribution,
+        // then divide by self.total_count estimate the variance of the sample average,
+        // then take the sqrt to get the stdev.
+        (var_sum / (((self.total_count - 1) * self.total_count) as f32)).sqrt()
+    }
     pub fn merge(&mut self, other: Histogram) {
         for (val, count) in other.hist.into_iter() {
             self.insert_many(val, count);
@@ -196,8 +207,18 @@ impl SimResult {
         self.scores.percentage_with(&PERFECT_SCORE) * 100.0
     }
 
+    pub fn percent_perfect_stderr(&self) -> f32 {
+        let pp = self.percent_perfect() / 100.0;
+        let stdev = (pp*(1.0 - pp) / ((self.scores.total_count - 1) as f32)).sqrt();
+        stdev * 100.0
+    }
+
     pub fn average_score(&self) -> f32 {
         self.scores.average()
+    }
+
+    pub fn score_stderr(&self) -> f32 {
+        self.scores.stdev_of_average()
     }
 
     pub fn average_lives(&self) -> f32 {
