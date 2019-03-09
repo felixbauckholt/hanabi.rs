@@ -9,8 +9,6 @@ use strategies::hat_helpers::*;
 
 // TODO: use random extra information - i.e. when casting up and down,
 // we sometimes have 2 choices of value to choose
-// TODO: guess very aggressively at very end of game (first, see whether
-// situation ever occurs)
 
 type PropertyPredicate = fn(&BoardState, &Card) -> bool;
 
@@ -789,16 +787,37 @@ impl InformationPlayerStrategy {
             return TurnChoice::Play(play_index)
         }
 
+        // If the deck ran out, we know we have a playable card somewhere, and there's only one place
+        // where it could be, play it.
+        // NOTE: This is very close to unnecessary since we're aggressively making risky plays at
+        // the end of the game.
+        // TODO: Replace this "ad hoc deduction" with something better integrated into our strategy
+        if view.board.deck_size == 0 {
+            let possibly_playable_cards = private_info.iter().enumerate().filter(|&(_, card_table)| {
+                card_table.probability_is_playable(&view.board) > 0.0
+            }).collect::<Vec<_>>();
+            if possibly_playable_cards.len() == 1 {
+                let (index, _) = possibly_playable_cards[0];
+                return TurnChoice::Play(index);
+            }
+        }
+
         let discard_threshold =
             view.board.total_cards
             - (COLORS.len() * VALUES.len()) as u32
             - (view.board.num_players * view.board.hand_size);
 
-        // make a possibly risky play
-        // TODO: consider removing this, if we improve information transfer
-        if view.board.lives_remaining > 1 &&
-           view.board.discard_size() <= discard_threshold
-        {
+        // Our willingness to make risky plays. If None, we won't, if Some(p) we play a card if it
+        // succeeds with probability > p.
+        let risky_play_threshold =
+            if view.board.lives_remaining <= 1 { None }
+            // NOTE: Once the deck runs out, our calculated "success probabilities" are pretty far off
+            // from the probabilities a smarter reasoner would come up with. Once we improve how we
+            // assign probabilities to cards, we should check if a threshold other than 0.0 is better.
+            else if view.board.deck_size == 0 { Some(0.0) }
+            else if view.board.discard_size() <= discard_threshold { Some(0.75) }
+            else { None };
+        if let Some(risky_play_threshold) = risky_play_threshold {
             let mut risky_playable_cards = private_info.iter().enumerate().filter(|&(_, card_table)| {
                 // card is either playable or dead
                 card_table.probability_of_predicate(&|card| {
@@ -815,7 +834,7 @@ impl InformationPlayerStrategy {
                 });
 
                 let maybe_play = risky_playable_cards[0];
-                if maybe_play.2 > 0.75 {
+                if maybe_play.2 > risky_play_threshold {
                     return TurnChoice::Play(maybe_play.0);
                 }
             }
