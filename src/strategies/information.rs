@@ -823,9 +823,6 @@ impl InformationPlayerStrategy {
 
         let public_useless_indices = self.find_useless_cards(&view.board, &public_info.get_player_info(me));
         let useless_indices = self.find_useless_cards(&view.board, &private_info);
-        let private_useless_index = useless_indices.iter().find(|&index| {
-            !public_useless_indices.iter().any(|other_index| other_index == index)
-        });
 
         // NOTE When changing this, make sure to keep the "discard" branch of update() up to date!
         let will_hint =
@@ -849,17 +846,12 @@ impl InformationPlayerStrategy {
         }
 
         // if anything is totally useless, discard it
-        if public_useless_indices.len() > 0 {
-            let info_amt = public_useless_indices.len() as u32;
-            if let Some(private_useless_index) = private_useless_index {
-                let num_states = info_amt + 2;
-                if public_info.decide_action_not_known_to_be_possible(num_states, view) {
-                    return TurnChoice::Discard(*private_useless_index);
-                }
-            }
-            let info = public_info.get_hat_sum(info_amt, view);
+        if public_useless_indices.len() > 1 {
+            let info = public_info.get_hat_sum(public_useless_indices.len() as u32, view);
             return TurnChoice::Discard(public_useless_indices[info.value as usize]);
         } else if useless_indices.len() > 0 {
+            // TODO: have opponents infer that i knew a card was useless
+            // TODO: after that, potentially prefer useless indices that arent public
             return TurnChoice::Discard(useless_indices[0]);
         }
 
@@ -898,23 +890,19 @@ impl InformationPlayerStrategy {
                 self.public_info.update_from_hint_choice(hint, matches, &self.last_view);
             }
             TurnChoice::Discard(index) => {
-                if self.last_view.board.hints_remaining > 0 {
-                    self.public_info.update_noone_else_needs_hint();
-                }
-
                 let known_useless_indices = self.find_useless_cards(
                     &self.last_view.board, &self.public_info.get_player_info(turn_player)
                 );
-                if known_useless_indices.len() > 0 {
-                    let info_amt = known_useless_indices.len() as u32;
-                    if let Some(value) = known_useless_indices.iter().position(|&i| i == *index) {
-                        let info = ModulusInformation::new(info_amt, value as u32);
-                        self.public_info.update_from_hat_sum(info, &self.last_view);
-                    } else {
-                        // The player discarded a card they privately knew to be dead!
-                        let num_states = info_amt + 2;
-                        self.public_info.update_from_action_not_known_to_be_possible(num_states, &self.last_view);
-                    }
+
+                if self.last_view.board.hints_remaining > 0 {
+                    self.public_info.update_noone_else_needs_hint();
+                }
+                if known_useless_indices.len() > 1 {
+                    // unwrap is safe because *if* a discard happened, and there were known
+                    // dead cards, it must be a dead card
+                    let value = known_useless_indices.iter().position(|&i| i == *index).unwrap();
+                    let info = ModulusInformation::new(known_useless_indices.len() as u32, value as u32);
+                    self.public_info.update_from_hat_sum(info, &self.last_view);
                 }
             }
             TurnChoice::Play(_index) => {
