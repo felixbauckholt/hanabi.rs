@@ -4,9 +4,9 @@ version = "0.1.0"
 authors = ["Jeff Wu <wuthefwasthat@gmail.com>"]
 
 [dependencies]
-rand = "*"
-log = "*"
-getopts = "*"
-fnv = "*"
-float-ord = "*"
+rand = "0.3"
+log = "0.3"
+getopts = "0.2"
+fnv = "1.0"
+float-ord = "0.2"
 crossbeam = "0.2.5"
