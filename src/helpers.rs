@@ -1,12 +1,12 @@
 use std::cmp::Eq;
 use std::collections::{HashMap, HashSet};
-use std::fmt;
-use std::ops::{Index,IndexMut};
-use std::hash::Hash;
 use std::convert::From;
+use std::fmt;
+use std::hash::Hash;
+use std::ops::{Index, IndexMut};
 use std::slice;
 
-use game::*;
+use crate::game::*;
 
 // trait representing information about a card
 pub trait CardInfo {
@@ -37,21 +37,25 @@ pub trait CardInfo {
     }
 
     fn get_weighted_possibilities(&self) -> Vec<(Card, f32)> {
-        self.get_possibilities().into_iter()
+        self.get_possibilities()
+            .into_iter()
             .map(|card| {
                 let weight = self.get_weight(&card);
                 (card, weight)
-            }).collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
     }
 
     fn total_weight(&self) -> f32 {
-        self.get_possibilities().iter()
+        self.get_possibilities()
+            .iter()
             .map(|card| self.get_weight(&card))
-            .fold(0.0, |a, b| a+b)
+            .fold(0.0, |a, b| a + b)
     }
 
-    fn weighted_score<T>(&self, score_fn: &Fn(&Card) -> T) -> f32
-        where f32: From<T>
+    fn weighted_score<T>(&self, score_fn: &dyn Fn(&Card) -> T) -> f32
+    where
+        f32: From<T>,
     {
         let mut total_score = 0.;
         let mut total_weight = 0.;
@@ -65,12 +69,16 @@ pub trait CardInfo {
     }
 
     fn average_value(&self) -> f32 {
-        self.weighted_score(&|card| card.value as f32 )
+        self.weighted_score(&|card| card.value as f32)
     }
 
-    fn probability_of_predicate(&self, predicate: &Fn(&Card) -> bool) -> f32 {
+    fn probability_of_predicate(&self, predicate: &dyn Fn(&Card) -> bool) -> f32 {
         let f = |card: &Card| {
-            if predicate(card) { 1.0 } else { 0.0 }
+            if predicate(card) {
+                1.0
+            } else {
+                0.0
+            }
         };
         self.weighted_score(&f)
     }
@@ -124,9 +132,11 @@ pub trait CardInfo {
     }
 }
 
-
 // Represents hinted information about possible values of type T
-pub trait Info<T> where T: Hash + Eq + Clone + Copy {
+pub trait Info<T>
+where
+    T: Hash + Eq + Clone + Copy,
+{
     // get all a-priori possibilities
     fn get_all_possibilities() -> Vec<T>;
 
@@ -137,7 +147,10 @@ pub trait Info<T> where T: Hash + Eq + Clone + Copy {
 
     // get what is now possible
     fn get_possibilities(&self) -> Vec<T> {
-        self.get_possibility_set().iter().map(|t| t.clone()).collect::<Vec<T>>()
+        self.get_possibility_set()
+            .iter()
+            .map(|t| t.clone())
+            .collect::<Vec<T>>()
     }
 
     fn is_possible(&self, value: T) -> bool {
@@ -145,8 +158,10 @@ pub trait Info<T> where T: Hash + Eq + Clone + Copy {
     }
 
     fn initialize() -> HashSet<T> {
-        Self::get_all_possibilities().iter()
-            .map(|val| val.clone()).collect::<HashSet<_>>()
+        Self::get_all_possibilities()
+            .iter()
+            .map(|val| val.clone())
+            .collect::<HashSet<_>>()
     }
 
     fn mark_true(&mut self, value: T) {
@@ -160,35 +175,55 @@ pub trait Info<T> where T: Hash + Eq + Clone + Copy {
     }
 
     fn mark(&mut self, value: T, info: bool) {
-        if info { self.mark_true(value); } else { self.mark_false(value); }
+        if info {
+            self.mark_true(value);
+        } else {
+            self.mark_false(value);
+        }
     }
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct ColorInfo(HashSet<Color>);
 impl ColorInfo {
-    pub fn new() -> ColorInfo { ColorInfo(ColorInfo::initialize()) }
+    pub fn new() -> ColorInfo {
+        ColorInfo(ColorInfo::initialize())
+    }
 }
 impl Info<Color> for ColorInfo {
-    fn get_all_possibilities() -> Vec<Color> { COLORS.to_vec() }
-    fn get_possibility_set(&self) -> &HashSet<Color> { &self.0 }
-    fn get_mut_possibility_set(&mut self) -> &mut HashSet<Color> { &mut self.0 }
+    fn get_all_possibilities() -> Vec<Color> {
+        COLORS.to_vec()
+    }
+    fn get_possibility_set(&self) -> &HashSet<Color> {
+        &self.0
+    }
+    fn get_mut_possibility_set(&mut self) -> &mut HashSet<Color> {
+        &mut self.0
+    }
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct ValueInfo(HashSet<Value>);
 impl ValueInfo {
-    pub fn new() -> ValueInfo { ValueInfo(ValueInfo::initialize()) }
+    pub fn new() -> ValueInfo {
+        ValueInfo(ValueInfo::initialize())
+    }
 }
 impl Info<Value> for ValueInfo {
-    fn get_all_possibilities() -> Vec<Value> { VALUES.to_vec() }
-    fn get_possibility_set(&self) -> &HashSet<Value> { &self.0 }
-    fn get_mut_possibility_set(&mut self) -> &mut HashSet<Value> { &mut self.0 }
+    fn get_all_possibilities() -> Vec<Value> {
+        VALUES.to_vec()
+    }
+    fn get_possibility_set(&self) -> &HashSet<Value> {
+        &self.0
+    }
+    fn get_mut_possibility_set(&mut self) -> &mut HashSet<Value> {
+        &mut self.0
+    }
 }
 
 // represents information only of the form:
 // this color is/isn't possible, this value is/isn't possible
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct SimpleCardInfo {
     pub color_info: ColorInfo,
     pub value_info: ValueInfo,
@@ -211,13 +246,10 @@ impl CardInfo for SimpleCardInfo {
         v
     }
     fn is_possible(&self, card: &Card) -> bool {
-        self.color_info.is_possible(card.color) &&
-        self.value_info.is_possible(card.value)
-
+        self.color_info.is_possible(card.color) && self.value_info.is_possible(card.value)
     }
     fn mark_color_false(&mut self, color: Color) {
         self.color_info.mark_false(color);
-
     }
     fn mark_value_false(&mut self, value: Value) {
         self.value_info.mark_false(value);
@@ -246,7 +278,7 @@ impl fmt::Display for SimpleCardInfo {
 // Can represent information of the form:
 // this card is/isn't possible
 // also, maintains integer weights for the cards
-#[derive(Clone,Debug,Eq,PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CardPossibilityTable {
     possible: HashMap<Card, u32>,
 }
@@ -269,9 +301,10 @@ impl CardPossibilityTable {
 
     pub fn decrement_weight(&mut self, card: &Card) {
         let remove = {
-            let weight =
-                self.possible.get_mut(card)
-                    .expect(&format!("Decrementing weight for impossible card: {}", card));
+            let weight = self.possible.get_mut(card).expect(&format!(
+                "Decrementing weight for impossible card: {}",
+                card
+            ));
             *weight -= 1;
             *weight == 0
         };
@@ -295,27 +328,35 @@ impl CardPossibilityTable {
 
     pub fn color_determined(&self) -> bool {
         self.get_possibilities()
-            .iter().map(|card| card.color)
+            .iter()
+            .map(|card| card.color)
             .collect::<HashSet<_>>()
-            .len() == 1
+            .len()
+            == 1
     }
 
     pub fn value_determined(&self) -> bool {
         self.get_possibilities()
-            .iter().map(|card| card.value)
+            .iter()
+            .map(|card| card.value)
             .collect::<HashSet<_>>()
-            .len() == 1
+            .len()
+            == 1
     }
 
     pub fn can_be_color(&self, color: Color) -> bool {
-        self.get_possibilities().into_iter().any(|card| card.color == color)
+        self.get_possibilities()
+            .into_iter()
+            .any(|card| card.color == color)
     }
 
     pub fn can_be_value(&self, value: Value) -> bool {
-        self.get_possibilities().into_iter().any(|card| card.value == value)
+        self.get_possibilities()
+            .into_iter()
+            .any(|card| card.value == value)
     }
 }
-impl <'a> From<&'a CardCounts> for CardPossibilityTable {
+impl<'a> From<&'a CardCounts> for CardPossibilityTable {
     fn from(counts: &'a CardCounts) -> CardPossibilityTable {
         let mut possible = HashMap::new();
         for &color in COLORS.iter() {
@@ -327,9 +368,7 @@ impl <'a> From<&'a CardCounts> for CardPossibilityTable {
                 }
             }
         }
-        CardPossibilityTable {
-            possible: possible,
-        }
+        CardPossibilityTable { possible: possible }
     }
 }
 impl CardInfo for CardPossibilityTable {
@@ -341,7 +380,11 @@ impl CardInfo for CardPossibilityTable {
         self.possible.contains_key(card)
     }
     fn get_possibilities(&self) -> Vec<Card> {
-        let mut cards = self.possible.keys().map(|card| {card.clone() }).collect::<Vec<_>>();
+        let mut cards = self
+            .possible
+            .keys()
+            .map(|card| card.clone())
+            .collect::<Vec<_>>();
         cards.sort();
         cards
     }
@@ -349,7 +392,6 @@ impl CardInfo for CardPossibilityTable {
         for &value in VALUES.iter() {
             self.mark_false(&Card::new(color, value));
         }
-
     }
     fn mark_value_false(&mut self, value: Value) {
         for &color in COLORS.iter() {
@@ -363,17 +405,23 @@ impl CardInfo for CardPossibilityTable {
 impl fmt::Display for CardPossibilityTable {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for (card, weight) in &self.possible {
-            try!(f.write_str(&format!("{} {}, ", weight, card)));
+            f.write_str(&format!("{} {}, ", weight, card))?;
         }
         Ok(())
     }
 }
 
-#[derive(Clone,Eq,PartialEq)]
-pub struct HandInfo<T> where T: CardInfo {
-    pub hand_info: Vec<T>
+#[derive(Clone, Eq, PartialEq)]
+pub struct HandInfo<T>
+where
+    T: CardInfo,
+{
+    pub hand_info: Vec<T>,
 }
-impl <T> HandInfo<T> where T: CardInfo {
+impl<T> HandInfo<T>
+where
+    T: CardInfo,
+{
     pub fn new(hand_size: u32) -> Self {
         let hand_info = (0..hand_size).map(|_| T::new()).collect::<Vec<_>>();
         HandInfo {
@@ -397,19 +445,35 @@ impl <T> HandInfo<T> where T: CardInfo {
         }
     }
 
-    pub fn remove(&mut self, index: usize) -> T { self.hand_info.remove(index) }
-    pub fn push(&mut self, card_info: T)        { self.hand_info.push(card_info) }
-    pub fn iter_mut(&mut self) -> slice::IterMut<T> { self.hand_info.iter_mut() }
-    pub fn iter(&self) -> slice::Iter<T>        { self.hand_info.iter() }
-    pub fn len(&self) -> usize                  { self.hand_info.len() }
+    pub fn remove(&mut self, index: usize) -> T {
+        self.hand_info.remove(index)
+    }
+    pub fn push(&mut self, card_info: T) {
+        self.hand_info.push(card_info)
+    }
+    pub fn iter_mut(&mut self) -> slice::IterMut<T> {
+        self.hand_info.iter_mut()
+    }
+    pub fn iter(&self) -> slice::Iter<T> {
+        self.hand_info.iter()
+    }
+    pub fn len(&self) -> usize {
+        self.hand_info.len()
+    }
 }
-impl <T> Index<usize> for HandInfo<T> where T: CardInfo {
+impl<T> Index<usize> for HandInfo<T>
+where
+    T: CardInfo,
+{
     type Output = T;
     fn index(&self, index: usize) -> &T {
         &self.hand_info[index]
     }
 }
-impl <T> IndexMut<usize> for HandInfo<T> where T: CardInfo {
+impl<T> IndexMut<usize> for HandInfo<T>
+where
+    T: CardInfo,
+{
     fn index_mut(&mut self, index: usize) -> &mut T {
         &mut self.hand_info[index]
     }

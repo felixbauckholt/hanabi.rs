@@ -1,7 +1,7 @@
-use game::*;
-use helpers::*;
+use crate::game::*;
+use crate::helpers::*;
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct ModulusInformation {
     pub modulus: u32,
     pub value: u32,
@@ -80,24 +80,24 @@ pub trait Question {
     // how much info does this question ask for?
     fn info_amount(&self) -> u32;
     // get the answer to this question, given cards
-    fn answer(&self, &Cards, &BoardState) -> u32;
+    fn answer(&self, _: &Cards, _: &BoardState) -> u32;
     // process the answer to this question, updating card info
     fn acknowledge_answer(
-        &self, value: u32, &mut HandInfo<CardPossibilityTable>, &BoardState
+        &self,
+        value: u32,
+        _: &mut HandInfo<CardPossibilityTable>,
+        _: &BoardState,
     );
 
     fn answer_info(&self, hand: &Cards, board: &BoardState) -> ModulusInformation {
-        ModulusInformation::new(
-            self.info_amount(),
-            self.answer(hand, board)
-        )
+        ModulusInformation::new(self.info_amount(), self.answer(hand, board))
     }
 
     fn acknowledge_answer_info(
         &self,
         answer: ModulusInformation,
         hand_info: &mut HandInfo<CardPossibilityTable>,
-        board: &BoardState
+        board: &BoardState,
     ) {
         assert!(self.info_amount() == answer.modulus);
         self.acknowledge_answer(answer.value, hand_info, board);
@@ -105,15 +105,14 @@ pub trait Question {
 }
 
 pub trait PublicInformation: Clone {
-    fn get_player_info(&self, &Player) -> HandInfo<CardPossibilityTable>;
-    fn set_player_info(&mut self, &Player, HandInfo<CardPossibilityTable>);
+    fn get_player_info(&self, _: &Player) -> HandInfo<CardPossibilityTable>;
+    fn set_player_info(&mut self, _: &Player, _: HandInfo<CardPossibilityTable>);
 
-    fn new(&BoardState) -> Self;
-    fn set_board(&mut self, &BoardState);
+    fn new(_: &BoardState) -> Self;
+    fn set_board(&mut self, _: &BoardState);
 
     /// If we store more state than just `HandInfo<CardPossibilityTable>`s, update it after `set_player_info` has been called.
-    fn update_other_info(&mut self) {
-    }
+    fn update_other_info(&mut self) {}
 
     fn agrees_with(&self, other: Self) -> bool;
 
@@ -126,11 +125,19 @@ pub trait PublicInformation: Clone {
     ///
     /// Note that `self` does not reflect the answers to previous questions; it reflects the state
     /// before the entire "hat value" calculation.
-    fn ask_question(&self, &Player, &HandInfo<CardPossibilityTable>, total_info: u32) -> Option<Box<Question>>;
+    fn ask_question(
+        &self,
+        _: &Player,
+        _: &HandInfo<CardPossibilityTable>,
+        total_info: u32,
+    ) -> Option<Box<dyn Question>>;
 
-    fn ask_question_wrapper(&self, player: &Player, hand_info: &HandInfo<CardPossibilityTable>, total_info: u32)
-        -> Option<Box<Question>>
-    {
+    fn ask_question_wrapper(
+        &self,
+        player: &Player,
+        hand_info: &HandInfo<CardPossibilityTable>,
+        total_info: u32,
+    ) -> Option<Box<dyn Question>> {
         assert!(total_info > 0);
         if total_info == 1 {
             None
@@ -138,8 +145,11 @@ pub trait PublicInformation: Clone {
             let result = self.ask_question(player, hand_info, total_info);
             if let Some(ref question) = result {
                 if question.info_amount() > total_info {
-                    panic!("ask_question returned question with info_amount = {} > total_info = {}!",
-                           question.info_amount(), total_info);
+                    panic!(
+                        "ask_question returned question with info_amount = {} > total_info = {}!",
+                        question.info_amount(),
+                        total_info
+                    );
                 }
                 if question.info_amount() == 1 {
                     panic!("ask_question returned a trivial question!");
@@ -157,11 +167,17 @@ pub trait PublicInformation: Clone {
     }
 
     fn get_hat_info_for_player(
-        &self, player: &Player, hand_info: &mut HandInfo<CardPossibilityTable>, total_info: u32, view: &OwnedGameView
+        &self,
+        player: &Player,
+        hand_info: &mut HandInfo<CardPossibilityTable>,
+        total_info: u32,
+        view: &OwnedGameView,
     ) -> ModulusInformation {
         assert!(player != &view.player);
         let mut answer_info = ModulusInformation::none();
-        while let Some(question) = self.ask_question_wrapper(player, hand_info, answer_info.info_remaining(total_info)) {
+        while let Some(question) =
+            self.ask_question_wrapper(player, hand_info, answer_info.info_remaining(total_info))
+        {
             let new_answer_info = question.answer_info(view.get_hand(player), view.get_board());
             question.acknowledge_answer_info(new_answer_info.clone(), hand_info, view.get_board());
             answer_info.combine(new_answer_info, total_info);
@@ -188,18 +204,22 @@ pub trait PublicInformation: Clone {
     /// `self.get_hat_sum(total_info, view)` tells us which choice to take, and at the same time
     /// mutates `self` to simulate the choice becoming common knowledge.
     fn get_hat_sum(&mut self, total_info: u32, view: &OwnedGameView) -> ModulusInformation {
-        let (infos, new_player_hands): (Vec<_>, Vec<_>) = view.get_other_players().iter().map(|player| {
-            let mut hand_info = self.get_player_info(player);
-            let info = self.get_hat_info_for_player(player, &mut hand_info, total_info, view);
-            (info, (player.clone(), hand_info))
-        }).unzip();
+        let (infos, new_player_hands): (Vec<_>, Vec<_>) = view
+            .get_other_players()
+            .iter()
+            .map(|player| {
+                let mut hand_info = self.get_player_info(player);
+                let info = self.get_hat_info_for_player(player, &mut hand_info, total_info, view);
+                (info, (player.clone(), hand_info))
+            })
+            .unzip();
         self.set_player_infos(new_player_hands);
         infos.into_iter().fold(
             ModulusInformation::new(total_info, 0),
             |mut sum_info, info| {
                 sum_info.add(&info);
                 sum_info
-            }
+            },
         )
     }
 
@@ -208,13 +228,17 @@ pub trait PublicInformation: Clone {
     /// from that fact.
     fn update_from_hat_sum(&mut self, mut info: ModulusInformation, view: &OwnedGameView) {
         let info_source = view.board.player;
-        let (other_infos, mut new_player_hands): (Vec<_>, Vec<_>) = view.get_other_players().into_iter().filter(|player| {
-            *player != info_source
-        }).map(|player| {
-            let mut hand_info = self.get_player_info(&player);
-            let player_info = self.get_hat_info_for_player(&player, &mut hand_info, info.modulus, view);
-            (player_info, (player.clone(), hand_info))
-        }).unzip();
+        let (other_infos, mut new_player_hands): (Vec<_>, Vec<_>) = view
+            .get_other_players()
+            .into_iter()
+            .filter(|player| *player != info_source)
+            .map(|player| {
+                let mut hand_info = self.get_player_info(&player);
+                let player_info =
+                    self.get_hat_info_for_player(&player, &mut hand_info, info.modulus, view);
+                (player_info, (player.clone(), hand_info))
+            })
+            .unzip();
         for other_info in other_infos {
             info.subtract(&other_info);
         }
